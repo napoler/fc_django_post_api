@@ -415,10 +415,10 @@ class MeEndpointTests(TestCase):
         self.assertEqual(resp.status_code, 401)
 
     def test_me_expired_token_401(self):
-        from rest_framework_simplejwt.state import api_settings
+        import json
         from datetime import datetime, timezone
 
-        payload = api_settings.TOKEN_ENCODER(
+        payload = json.dumps(
             {
                 "token_type": "access",
                 "exp": datetime(2020, 1, 1, tzinfo=timezone.utc).timestamp(),
