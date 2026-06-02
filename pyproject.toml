@@ -7,7 +7,7 @@ name = "fc-django-post-api"
 version = "2026.6.0"
 description = "Django REST API package extracted from fc_django_crazypowertools"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 requires-python = ">=3.10"
 authors = [
   {name = "DBox AI"}
