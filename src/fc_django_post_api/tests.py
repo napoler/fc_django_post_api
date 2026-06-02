@@ -91,7 +91,7 @@ class AuthenticationTests(PostAPITestCase):
 class PostListTests(PostAPITestCase):
     """Tests for post listing endpoint."""
 
-    @patch("api.views.PostViewSet.get_queryset")
+    @patch("fc_django_post_api.views.PostViewSet.get_queryset")
     def test_list_posts_unauthenticated(self, mock_get_queryset):
         """Test that unauthenticated users can only see published posts."""
         mock_get_queryset.return_value = [self.mock_post_published]
@@ -105,7 +105,7 @@ class PostListTests(PostAPITestCase):
             ],
         )
 
-    @patch("api.views.PostViewSet.get_queryset")
+    @patch("fc_django_post_api.views.PostViewSet.get_queryset")
     def test_list_posts_authenticated(self, mock_get_queryset):
         """Test that authenticated users can see all posts."""
         self.client.force_authenticate(user=self.user1)
@@ -125,7 +125,7 @@ class PostCreateTests(PostAPITestCase):
         response = self.client.post("/api/posts/", {"title": "New Post", "body": "Content"})
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
-    @patch("api.serializers.PostSerializer.create")
+    @patch("fc_django_post_api.serializers.PostSerializer.create")
     def test_create_post_authenticated(self, mock_create):
         """Test that authenticated users can create posts."""
         self.client.force_authenticate(user=self.user1)
@@ -145,7 +145,7 @@ class PostCreateTests(PostAPITestCase):
 class PostDetailTests(PostAPITestCase):
     """Tests for post detail endpoint."""
 
-    @patch("api.views.PostViewSet.get_queryset")
+    @patch("fc_django_post_api.views.PostViewSet.get_queryset")
     def test_retrieve_post(self, mock_get_queryset):
         """Test retrieving a single post."""
         mock_get_queryset.return_value = [self.mock_post_published]
@@ -192,7 +192,7 @@ class MyPostsTests(PostAPITestCase):
         response = self.client.get("/api/posts/my_posts/")
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
-    @patch("api.views.PostViewSet.get_queryset")
+    @patch("fc_django_post_api.views.PostViewSet.get_queryset")
     def test_my_posts_authenticated(self, mock_get_queryset):
         """Test that authenticated users can get their posts."""
         self.client.force_authenticate(user=self.user1)
