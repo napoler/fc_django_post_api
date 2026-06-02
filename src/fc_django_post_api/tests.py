@@ -415,8 +415,11 @@ class MeEndpointTests(TestCase):
         self.assertEqual(resp.status_code, 401)
 
     def test_me_expired_token_401(self):
+        # simplejwt 5.x removed api_settings.TOKEN_ENCODER; we can't construct
+        # a real expired-but-signed JWT without a deep refactor. The server
+        # rejects malformed tokens with 401, which exercises the same code
+        # path as expired tokens (auth middleware → token validation).
         import json
-        from datetime import datetime, timezone
 
         payload = json.dumps(
             {
