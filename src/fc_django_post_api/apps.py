@@ -1,7 +1,9 @@
 """Django App 配置。
 
-将包注册为 ``api`` 标签（保持与 Django ``reverse`` 查找、迁移历史兼容），
-并于 App 启动时为 ``admin.site`` 注入自定义 URL 与导航菜单。
+将包注册为 ``api`` 标签（保持与 Django ``reverse`` 查找、迁移历史兼容）。
+``admin.site`` 的 monkey-patch 已从 ``ready()`` 移除，改为在 ``urls.py`` 顶部
+lazy 触发；这避开了 ``apps.populate()`` 锁内导入 admin 模块导致的
+``RuntimeError: populate() isn't reentrant``（阿里云 FC 冷启动路径上必现）。
 """
 
 from django.apps import AppConfig
@@ -21,12 +23,3 @@ class FcDjangoPostApiConfig(AppConfig):
     name = "fc_django_post_api"
     label = "api"
     verbose_name = "API"
-
-    def ready(self):
-        """App 启动钩子：通过 import 副作用注入 admin monkey-patch。
-
-        仅做导入，不调用任何函数；模块顶层即完成对 ``admin.site`` 的扩展。
-        """
-        # 导入即触发 admin.site 的 monkey-patch
-        from fc_django_post_api import admin_site  # noqa: F401
-        from . import admin as api_admin  # noqa: F401

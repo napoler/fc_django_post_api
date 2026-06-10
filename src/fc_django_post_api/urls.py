@@ -13,6 +13,8 @@ URL 分布：
 - ``/api/docs/`` —— OpenAPI Schema 浏览端点
 """
 
+# 触发 admin.site monkey-patch，延迟到 urls 模块首次导入时执行（避开 apps.populate() 锁）
+from . import admin_site  # noqa: F401  # type: ignore[unused-import]
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import (
@@ -20,7 +22,7 @@ from rest_framework_simplejwt.views import (
     TokenRefreshView,
     TokenVerifyView,
 )
-from djoser.views import UserViewSet
+from djoser.views import UserViewSet  # noqa: F401  # type: ignore[unused-import]  # 供 djoser.urls 内部使用
 from rest_framework.schemas import get_schema_view
 
 from .views import HealthView, MeView, PostViewSet

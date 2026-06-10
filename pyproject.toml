@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fc-django-post-api"
-version = "2026.6.0"
+version = "2026.6.3"
 description = "Django REST API package extracted from fc_django_crazypowertools"
 readme = "README.md"
 license = "MIT"

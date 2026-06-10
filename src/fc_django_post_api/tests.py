@@ -267,6 +267,27 @@ class NoThrottlingTests(TestCase):
             import fc_django_post_api.throttles  # noqa: F401
 
 
+class ReadyHookRegressionTests(TestCase):
+    """回归测试：``AppConfig.ready()`` 必须为空,避免在 ``apps.populate()``
+    锁内导入 admin 模块触发 ``RuntimeError: populate() isn't reentrant``
+    （阿里云 FC 冷启动路径上必现）。
+    """
+
+    def test_ready_is_not_overridden(self):
+        """``FcDjangoPostApiConfig.ready`` 必须是基类默认实现,不能被子类重写。"""
+        from fc_django_post_api.apps import FcDjangoPostApiConfig
+        from django.apps import AppConfig
+
+        self.assertIs(FcDjangoPostApiConfig.ready, AppConfig.ready)
+
+    def test_admin_site_lazy_via_urls(self):
+        """``fc_django_post_api.urls`` 模块导入时必须触发 ``admin_site`` 副作用,
+        确保 admin 路由可被 reverse。
+        """
+        from django.contrib import admin
+        self.assertEqual(admin.site.get_urls.__name__, "custom_get_urls")
+
+
 class SerializerTests(PostAPITestCase):
     """``PostSerializer`` / ``PostListSerializer`` 字段契约测试。"""
 
