@@ -1,15 +1,19 @@
-"""
-API Serializers for Post CRUD operations.
-Uses tbase_post.models.Post from external package.
+"""Post CRUD 相关的 API 序列化器。
+
+``Post`` 模型来自外部包 ``tbase_post.models.Post``，本模块按需在 ``__init__``
+中动态导入，避免 Django App 加载顺序导致的循环导入。
 """
 
 from rest_framework import serializers
 
 
 class PostSerializer(serializers.ModelSerializer):
-    """
-    Serializer for tbase_post Post model.
-    Uses ModelSerializer for automatic field mapping.
+    """``Post`` 模型的完整序列化器，用于详情/创建/更新/部分更新动作。
+
+    关键扩展：
+    - ``tag_names``：接收/输出标签名列表，封装 django-taggit 写入
+    - ``author``：仅读，写入由 ViewSet 通过 ``perform_create`` 注入
+    - ``author_name``：从 ``author.username`` 派生的展示字段
     """
 
     tag_names = serializers.ListField(
@@ -22,7 +26,7 @@ class PostSerializer(serializers.ModelSerializer):
     author_name = serializers.SerializerMethodField()
 
     class Meta:
-        model = None  # Set dynamically in __init__
+        model = None  # 在 __init__ 中动态注入，避免循环 import
         fields = [
             "id",
             "title",
@@ -50,13 +54,13 @@ class PostSerializer(serializers.ModelSerializer):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Import Post model dynamically to avoid import errors
+        # 动态导入 Post 模型，规避 AppConfig 加载顺序导致的循环依赖
         from tbase_post.models import Post
 
         self.Meta.model = Post
 
     def to_representation(self, instance):
-        """Include tag_names in output."""
+        """在序列化输出中补全 ``tag_names`` 字段（取自 django-taggit）。"""
         data = super().to_representation(instance)
         try:
             data["tag_names"] = list(instance.tags.values_list("name", flat=True))
@@ -65,14 +69,14 @@ class PostSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
-        """Create post and set tags."""
+        """创建 Post 实例并写入标签集合。"""
         tag_names = validated_data.pop("tag_names", [])
         instance = super().create(validated_data)
         self._set_tags(instance, tag_names)
         return instance
 
     def update(self, instance, validated_data):
-        """Update post and set tags."""
+        """更新 Post 字段；如传入 ``tag_names`` 则同步替换标签集合。"""
         tag_names = validated_data.pop("tag_names", None)
         instance = super().update(instance, validated_data)
         if tag_names is not None:
@@ -80,14 +84,14 @@ class PostSerializer(serializers.ModelSerializer):
         return instance
 
     def _set_tags(self, instance, tag_names):
-        """Set tags on instance using django-taggit."""
-        # Clear existing tags and add new ones
+        """使用 django-taggit 替换实例的全部标签。"""
+        # 先清空再追加，确保最终标签集合与请求完全一致
         instance.tags.clear()
         for tag_name in tag_names:
             instance.tags.add(tag_name)
 
     def get_author_name(self, obj):
-        """Get author username."""
+        """返回作者用户名；作者为空时返回 ``None``。"""
         try:
             return obj.author.username if obj.author else None
         except Exception:
@@ -95,14 +99,12 @@ class PostSerializer(serializers.ModelSerializer):
 
 
 class PostListSerializer(serializers.ModelSerializer):
-    """
-    Simplified serializer for post listing.
-    """
+    """``Post`` 列表动作使用的精简序列化器（仅核心字段）。"""
 
     tag_names = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
-        model = None  # Set dynamically in __init__
+        model = None  # 在 __init__ 中动态注入
         fields = [
             "id",
             "title",
@@ -120,7 +122,7 @@ class PostListSerializer(serializers.ModelSerializer):
         self.Meta.model = Post
 
     def get_tag_names(self, obj):
-        """Get tag names from taggit."""
+        """返回实例关联的标签名列表（取自 django-taggit）。"""
         try:
             return list(obj.tags.values_list("name", flat=True))
         except Exception:

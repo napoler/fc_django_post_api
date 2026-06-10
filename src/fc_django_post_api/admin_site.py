@@ -1,7 +1,7 @@
-"""
-Custom admin views for API Help and Token Generation.
-Uses monkey-patching to extend the default admin.site without replacing it.
-This preserves all existing model registrations from tbase_admin.
+"""API 帮助页与令牌签发相关的 admin 视图。
+
+通过 monkey-patch 扩展默认的 ``admin.site`` 而非整体替换，
+从而保留 ``tbase_admin`` 中已注册的全部模型。
 """
 
 from django.contrib import admin
@@ -16,7 +16,7 @@ from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken
 
 
 def get_jwt_settings():
-    """Get JWT token lifetime settings."""
+    """从 ``settings.SIMPLE_JWT`` 中读取 access / refresh 令牌的过期时间。"""
     jwt_settings = getattr(settings, "SIMPLE_JWT", {})
     access_lifetime = jwt_settings.get("ACCESS_TOKEN_LIFETIME")
     refresh_lifetime = jwt_settings.get("REFRESH_TOKEN_LIFETIME")
@@ -27,15 +27,13 @@ def get_jwt_settings():
 
 
 def api_help_view(request: HttpRequest) -> HttpResponse:
-    """
-    Display API documentation page in admin.
-    """
+    """渲染 admin 中的 API 文档与当前用户令牌列表页。"""
     from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
     from django.utils import timezone
 
     base_url = request.build_absolute_uri("/api/")
 
-    # Get current user's tokens
+    # 拉取当前用户的所有未过期 JWT，并标注每条是否已被吊销
     user_tokens = OutstandingToken.objects.filter(user=request.user)
     active_tokens = []
     for token in user_tokens:
@@ -61,15 +59,17 @@ def api_help_view(request: HttpRequest) -> HttpResponse:
 
 
 def api_token_view(request: HttpRequest) -> HttpResponse:
-    """
-    Generate JWT token for the logged-in user and list existing tokens.
+    """为当前登录用户签发 JWT 令牌对，并展示其历史令牌列表。
+
+    GET: 渲染表单页 + 历史令牌列表（按签发时间倒序）。
+    POST: 调用 :func:`RefreshToken.for_user` 签发新令牌，写回模板。
     """
     from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
     from django.utils import timezone
 
     jwt_settings = get_jwt_settings()
 
-    # Get current user's existing tokens
+    # 历史令牌列表（按签发时间倒序）
     user_tokens = OutstandingToken.objects.filter(user=request.user).order_by("-created_at")
     active_tokens = []
     for token in user_tokens:
@@ -98,7 +98,7 @@ def api_token_view(request: HttpRequest) -> HttpResponse:
 
     if request.method == "POST":
         try:
-            # Generate tokens for the current user
+            # 为当前用户签发新的 access / refresh 令牌对
             refresh = RefreshToken.for_user(request.user)
             context["access_token"] = str(refresh.access_token)
             context["refresh_token"] = str(refresh)
@@ -110,12 +110,16 @@ def api_token_view(request: HttpRequest) -> HttpResponse:
 
 
 def revoke_token_view(request: HttpRequest, token_id: int) -> HttpResponse:
+    """吊销指定 JWT：将 ``OutstandingToken`` 标记进 ``BlacklistedToken`` 表。
+
+    权限约束：普通用户只能吊销自己的令牌，超级用户可吊销任意令牌。
+    """
     from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
     from django.shortcuts import get_object_or_404, redirect
 
     token = get_object_or_404(OutstandingToken, id=token_id)
 
-    # Users can only revoke their own tokens, admins can revoke any
+    # 权限校验：仅本人或超级用户可吊销
     if request.user != token.user and not request.user.is_superuser:
         messages.error(request, "You can only revoke your own tokens!")
         return redirect("admin:api_help")
@@ -125,12 +129,12 @@ def revoke_token_view(request: HttpRequest, token_id: int) -> HttpResponse:
     return redirect("admin:api_help")
 
 
-# Monkey-patch admin.site.get_urls() to add custom URLs
+# 通过 monkey-patch 扩展 admin.site.get_urls()，注入自定义 URL
 _original_get_urls = admin.site.get_urls
 
 
 def custom_get_urls():
-    """Extend admin.site.get_urls() with custom API URLs."""
+    """在 ``admin.site.get_urls()`` 返回的 URL 列表前插入 API 相关路由。"""
     urls = _original_get_urls()
     custom_urls = [
         path("api-help/", admin.site.admin_view(api_help_view), name="api_help"),
@@ -144,20 +148,20 @@ def custom_get_urls():
     return custom_urls + urls
 
 
-# Apply the monkey-patch
+# 应用 monkey-patch
 admin.site.get_urls = custom_get_urls
 
 
-# Monkey-patch admin.site.get_app_list() to add API menu to left navigation
+# 通过 monkey-patch 扩展 admin.site.get_app_list()，在左侧导航添加 API 菜单
 # Django 3.2 AdminSite.get_app_list(self, request)
 _original_get_app_list = admin.site.get_app_list.__func__
 
 
 def custom_get_app_list(self, request):
-    """Extend admin.site.get_app_list() to add API menu."""
+    """扩展 ``admin.site.get_app_list()``，在 admin 左侧导航注入 API 菜单项。"""
     app_list = _original_get_app_list(self, request)
 
-    # Add API application to navigation
+    # 在 admin 导航中新增 API 应用入口
     api_app = {
         "name": "API",
         "app_label": "api",
@@ -179,7 +183,7 @@ def custom_get_app_list(self, request):
         ],
     }
 
-    # Insert after "性能管理" (index 0) or at the end
+    # 优先插入到"性能管理"之后（保持原"性能管理"在第一位），否则插到最前
     if app_list and app_list[0].get("app_label") == "performance":
         app_list.insert(1, api_app)
     else:
@@ -188,5 +192,5 @@ def custom_get_app_list(self, request):
     return app_list
 
 
-# Apply the monkey-patch (bind to admin.site instance)
+# 应用 monkey-patch（绑定到 admin.site 实例）
 admin.site.get_app_list = custom_get_app_list.__get__(admin.site, type(admin.site))

@@ -1,24 +1,23 @@
-"""
-Custom permissions for API endpoints.
+"""API 端点的自定义权限类。
+
+当前仅提供 :class:`IsAuthorOrReadOnly`，用于 ``PostViewSet`` 的对象级权限校验。
 """
 
 from rest_framework import permissions
 
 
 class IsAuthorOrReadOnly(permissions.BasePermission):
-    """
-    Custom permission to only allow authors of an object to edit it.
-    Assumes the model instance has an 'author' attribute.
+    """对象级权限：仅作者本人可写，其他人仅可读。
+
+    依赖模型实例具有 ``author`` 属性（指向 ``settings.AUTH_USER_MODEL``）。
     """
 
     def has_object_permission(self, request, view, obj):
-        # Read permissions are allowed for any request,
-        # so we'll always allow GET, HEAD or OPTIONS requests.
+        # 读请求（GET / HEAD / OPTIONS）一律放行
         if request.method in permissions.SAFE_METHODS:
             return True
 
-        # Write permissions only for the author
-        # If obj.author is None, deny write access
+        # 写请求仅允许作者本人；若对象没有 author（孤儿数据），直接拒绝
         if obj.author is None:
             return False
         return obj.author == request.user
