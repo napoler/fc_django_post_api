@@ -1,0 +1,3 @@
+include README.md LICENSE
+include pyproject.toml
+recursive-include src/fc_django_post_api *.py
