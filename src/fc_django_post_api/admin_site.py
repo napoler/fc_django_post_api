@@ -2,17 +2,23 @@
 
 通过 monkey-patch 扩展默认的 ``admin.site`` 而非整体替换，
 从而保留 ``tbase_admin`` 中已注册的全部模型。
+
+``token_blacklist`` app 已从 ``INSTALLED_APPS`` 移除（迁移 0001 删除
+``OutstandingToken`` / ``BlacklistedToken`` 表），因此本页不再查询持久化
+历史令牌。GET 时 ``active_tokens`` 为空列表；POST 签发后仅把刚签发的
+令牌以 ``id="just-issued"`` 追加到列表供用户复制。``revoke_token_view``
+收到 ``token_id=0``（占位）时直接重定向到 api-help 页。
 """
 
 from django.contrib import admin
-from django.shortcuts import render
+from django.shortcuts import render, redirect
 from django.http import HttpRequest, HttpResponse
 from django.contrib import messages
 from django.urls import path, reverse
 from django.conf import settings
+from django.utils import timezone
 
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken
 
 
 def get_jwt_settings():
@@ -27,63 +33,31 @@ def get_jwt_settings():
 
 
 def api_help_view(request: HttpRequest) -> HttpResponse:
-    """渲染 admin 中的 API 文档与当前用户令牌列表页。"""
-    from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
-    from django.utils import timezone
+    """渲染 admin 中的 API 文档页。
 
+    ``active_tokens`` 永远为空（历史 token 表已删除），但保留字段以便
+    模板可统一遍历。
+    """
     base_url = request.build_absolute_uri("/api/")
-
-    # 拉取当前用户的所有未过期 JWT，并标注每条是否已被吊销
-    user_tokens = OutstandingToken.objects.filter(user=request.user)
-    active_tokens = []
-    for token in user_tokens:
-        is_expired = token.expires_at < timezone.now()
-        is_blacklisted = BlacklistedToken.objects.filter(token=token).exists()
-        active_tokens.append(
-            {
-                "id": token.id,
-                "created_at": token.created_at,
-                "expires_at": token.expires_at,
-                "is_expired": is_expired,
-                "is_blacklisted": is_blacklisted,
-            }
-        )
 
     context = {
         "title": "API Token Management",
         "base_url": base_url,
-        "active_tokens": active_tokens,
+        "active_tokens": [],
         **admin.site.each_context(request),
     }
     return render(request, "admin/api_help.html", context)
 
 
 def api_token_view(request: HttpRequest) -> HttpResponse:
-    """为当前登录用户签发 JWT 令牌对，并展示其历史令牌列表。
+    """为当前登录用户签发 JWT 令牌对。
 
-    GET: 渲染表单页 + 历史令牌列表（按签发时间倒序）。
-    POST: 调用 :func:`RefreshToken.for_user` 签发新令牌，写回模板。
+    GET: 渲染表单页 + 空历史令牌列表。
+    POST: 调用 :func:`RefreshToken.for_user` 签发新令牌，并以
+        ``id="just-issued"`` 写入 ``active_tokens`` 头部供模板展示。
     """
-    from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
-    from django.utils import timezone
-
     jwt_settings = get_jwt_settings()
-
-    # 历史令牌列表（按签发时间倒序）
-    user_tokens = OutstandingToken.objects.filter(user=request.user).order_by("-created_at")
-    active_tokens = []
-    for token in user_tokens:
-        is_expired = token.expires_at < timezone.now()
-        is_blacklisted = BlacklistedToken.objects.filter(token=token).exists()
-        active_tokens.append(
-            {
-                "id": token.id,
-                "created_at": token.created_at,
-                "expires_at": token.expires_at,
-                "is_expired": is_expired,
-                "is_blacklisted": is_blacklisted,
-            }
-        )
+    active_tokens: list[dict] = []
 
     context = {
         "title": "获取访问令牌",
@@ -98,10 +72,24 @@ def api_token_view(request: HttpRequest) -> HttpResponse:
 
     if request.method == "POST":
         try:
-            # 为当前用户签发新的 access / refresh 令牌对
             refresh = RefreshToken.for_user(request.user)
-            context["access_token"] = str(refresh.access_token)
-            context["refresh_token"] = str(refresh)
+            now = timezone.now()
+            access_lifetime = jwt_settings["access_lifetime"] or timezone.timedelta(hours=1)
+            access_token_str = str(refresh.access_token)
+            refresh_token_str = str(refresh)
+            context["access_token"] = access_token_str
+            context["refresh_token"] = refresh_token_str
+            active_tokens.append(
+                {
+                    "id": "just-issued",
+                    "created_at": now,
+                    "expires_at": now + access_lifetime,
+                    "is_expired": False,
+                    "is_blacklisted": False,
+                    "access_token": access_token_str,
+                    "refresh_token": refresh_token_str,
+                }
+            )
             messages.success(request, "✅ 访问令牌已成功生成！")
         except Exception as e:
             messages.error(request, f"❌ 生成令牌失败: {str(e)}")
@@ -110,26 +98,18 @@ def api_token_view(request: HttpRequest) -> HttpResponse:
 
 
 def revoke_token_view(request: HttpRequest, token_id: int) -> HttpResponse:
-    """吊销指定 JWT：将 ``OutstandingToken`` 标记进 ``BlacklistedToken`` 表。
+    """占位路由：旧版依赖 ``OutstandingToken`` 表，删除后改为 no-op 重定向。
 
-    权限约束：普通用户只能吊销自己的令牌，超级用户可吊销任意令牌。
+    客户端无法再引用持久化的 token id（0 是约定占位），所以直接跳到
+    api-help 并提示用户重新签发。
     """
-    from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
-    from django.shortcuts import get_object_or_404, redirect
-
-    token = get_object_or_404(OutstandingToken, id=token_id)
-
-    # 权限校验：仅本人或超级用户可吊销
-    if request.user != token.user and not request.user.is_superuser:
-        messages.error(request, "You can only revoke your own tokens!")
-        return redirect("admin:api_help")
-
-    BlacklistedToken.objects.get_or_create(token=token)
-    messages.success(request, f"Token #{token_id} has been revoked successfully!")
+    messages.info(
+        request,
+        "历史令牌记录已被清理，请重新签发新令牌。",
+    )
     return redirect("admin:api_help")
 
 
-# 通过 monkey-patch 扩展 admin.site.get_urls()，注入自定义 URL
 _original_get_urls = admin.site.get_urls
 
 
@@ -148,12 +128,9 @@ def custom_get_urls():
     return custom_urls + urls
 
 
-# 应用 monkey-patch
 admin.site.get_urls = custom_get_urls
 
 
-# 通过 monkey-patch 扩展 admin.site.get_app_list()，在左侧导航添加 API 菜单
-# Django 3.2 AdminSite.get_app_list(self, request)
 _original_get_app_list = admin.site.get_app_list.__func__
 
 
@@ -161,7 +138,6 @@ def custom_get_app_list(self, request):
     """扩展 ``admin.site.get_app_list()``，在 admin 左侧导航注入 API 菜单项。"""
     app_list = _original_get_app_list(self, request)
 
-    # 在 admin 导航中新增 API 应用入口
     api_app = {
         "name": "API",
         "app_label": "api",
@@ -183,7 +159,6 @@ def custom_get_app_list(self, request):
         ],
     }
 
-    # 优先插入到"性能管理"之后（保持原"性能管理"在第一位），否则插到最前
     if app_list and app_list[0].get("app_label") == "performance":
         app_list.insert(1, api_app)
     else:
@@ -192,5 +167,4 @@ def custom_get_app_list(self, request):
     return app_list
 
 
-# 应用 monkey-patch（绑定到 admin.site 实例）
 admin.site.get_app_list = custom_get_app_list.__get__(admin.site, type(admin.site))
